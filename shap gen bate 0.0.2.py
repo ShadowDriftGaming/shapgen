@@ -1,18 +1,17 @@
 import turtle
 import tkinter as tk
-from tkinter import messagebox, simpledialog, filedialog, scrolledtext, ttk, colorchooser
+from tkinter import messagebox, simpledialog, filedialog, colorchooser
 import json
 from datetime import datetime, timedelta
 import csv
-import socket
-import threading
 from PIL import ImageGrab
+import webbrowser  # For opening GitHub page
 
 # Constants and Global Variables
 CREDENTIALS_FILE = 'credentials.json'
 FEEDBACK_FILE = 'feedback.txt'
 OWNER_ACCOUNT = 'owner'
-OWNER_PASSWORD = "owner123"  # Replace with your desired owner password
+OWNER_PASSWORD = "shadow"  # Replace with your desired owner password
 users = {}
 logged_in_user = None
 banned_users = set()
@@ -25,18 +24,10 @@ free_draw_mode_active = False
 # Drawing Features
 drawing_features = [
     "triangle", "square", "pentagon", "circle", "rectangle",
-    "star", "hexagon", "octagon", "spiral", "heart",
-    "arrow", "circle_pattern", "flower", "butterfly", "sun",
-    "square_spiral", "hexagon_pattern", "octagon_pattern", "polygon", "daisy",
-    "spiral_pattern", "wave", "grid", "starburst", "spiral_square",
-    "heart_pattern", "kaleidoscope", "whirlwind", "flower_pattern", "lightning"
+    "star", "hexagon", "octagon", "spiral", "heart"
 ]
 
-# Games
-games = [
-    "Number Guessing", "Tic Tac Toe", "Hangman", "Rock Paper Scissors", "Quiz Game"
-]
-
+# Initialize the changelog
 class Changelog:
     def __init__(self, file_path='changelog.json'):
         self.file_path = file_path
@@ -63,7 +54,6 @@ class Changelog:
         self.changes.append(entry)
         self.save_changes()
 
-# Initialize the changelog
 changelog = Changelog()
 
 def load_credentials():
@@ -83,8 +73,14 @@ def login():
     username = simpledialog.askstring("Login", "Enter username:")
     password = simpledialog.askstring("Login", "Enter password:", show='*')
     if username in users and users[username] == password:
-        logged_in_user = username
-        messagebox.showinfo("Login", f"Welcome back, {username}!")
+        if username in banned_users:
+            messagebox.showerror("Login Failed", "You are banned from this application.")
+        elif username in timeout_users and datetime.now() < timeout_users[username]:
+            remaining_time = timeout_users[username] - datetime.now()
+            messagebox.showerror("Login Failed", f"You are timed out. Try again in {remaining_time.seconds // 60} minutes.")
+        else:
+            logged_in_user = username
+            messagebox.showinfo("Login", f"Welcome back, {username}!")
     else:
         messagebox.showerror("Login Failed", "Invalid username or password.")
 
@@ -111,9 +107,6 @@ def authenticate_admin():
     password = simpledialog.askstring("Admin Authentication", "Enter admin password:", show='*')
     return password == OWNER_PASSWORD
 
-def authenticate_user(password):
-    return password == users.get(logged_in_user, "")
-
 def load_feedback():
     try:
         with open(FEEDBACK_FILE, 'r') as f:
@@ -124,8 +117,9 @@ def load_feedback():
 
 def clear_feedback():
     try:
-        open(FEEDBACK_FILE, 'w').close()
-        messagebox.showinfo("Feedback Cleared", "All feedback has been cleared.")
+        if authenticate_admin():
+            open(FEEDBACK_FILE, 'w').close()
+            messagebox.showinfo("Feedback Cleared", "All feedback has been cleared.")
     except Exception as e:
         messagebox.showerror("Error", f"Failed to clear feedback: {e}")
 
@@ -139,38 +133,6 @@ def save_feedback():
             messagebox.showinfo("Feedback Saved", "Feedback has been saved.")
     except Exception as e:
         messagebox.showerror("Error", f"Failed to save feedback: {e}")
-
-def search_feedback(search_term):
-    feedback_data = load_feedback()
-    search_results = "\n".join([line for line in feedback_data.split('\n') if search_term.lower() in line.lower()])
-    return search_results or "No matching feedback found."
-
-def delete_feedback(feedback_to_delete):
-    feedback_data = load_feedback().split('\n')
-    if feedback_to_delete in feedback_data:
-        feedback_data.remove(feedback_to_delete)
-        with open(FEEDBACK_FILE, 'w') as f:
-            f.write("\n".join(feedback_data) + "\n")
-        messagebox.showinfo("Feedback Deleted", "Feedback has been deleted.")
-    else:
-        messagebox.showerror("Error", "Feedback not found.")
-
-def export_feedback(format):
-    feedback_data = load_feedback().split('\n')
-    save_file_path = filedialog.asksaveasfilename(defaultextension=f".{format}", filetypes=[(f"{format.upper()} files", f"*.{format}")])
-    if save_file_path:
-        try:
-            if format == 'csv':
-                with open(save_file_path, 'w', newline='') as f:
-                    writer = csv.writer(f)
-                    for line in feedback_data:
-                        writer.writerow([line])
-            elif format == 'json':
-                with open(save_file_path, 'w') as f:
-                    json.dump(feedback_data, f, indent=4)
-            messagebox.showinfo("Feedback Exported", f"Feedback has been exported as {format.upper()}.")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to export feedback: {e}")
 
 def handle_account_settings():
     if not logged_in_user:
@@ -216,7 +178,28 @@ def handle_account_settings():
             del users[logged_in_user]
             save_credentials()
             messagebox.showinfo("Account Deleted", "Your account has been deleted successfully.")
-            
+
+    def ban_user():
+        if authenticate_admin():
+            username = simpledialog.askstring("Ban User", "Enter username to ban:")
+            if username in users and username != logged_in_user:
+                banned_users.add(username)
+                messagebox.showinfo("User Banned", f"User {username} has been banned successfully.")
+                changelog.add_entry("1.0.9", "User Banned", f"User {username} banned by {logged_in_user}")
+            else:
+                messagebox.showerror("Ban Failed", "User not found or you cannot ban yourself.")
+
+    def timeout_user():
+        if authenticate_admin():
+            username = simpledialog.askstring("Timeout User", "Enter username to timeout:")
+            if username in users and username != logged_in_user:
+                timeout_duration = simpledialog.askinteger("Timeout Duration", "Enter timeout duration in minutes:")
+                if timeout_duration:
+                    timeout_users[username] = datetime.now() + timedelta(minutes=timeout_duration)
+                    messagebox.showinfo("User Timed Out", f"User {username} has been timed out for {timeout_duration} minutes.")
+                    changelog.add_entry("1.0.10", "User Timed Out", f"User {username} timed out by {logged_in_user} for {timeout_duration} minutes")
+            else:
+                messagebox.showerror("Timeout Failed", "User not found or you cannot timeout yourself.")
 
     settings_window = tk.Toplevel()
     settings_window.title("Account Settings")
@@ -226,6 +209,8 @@ def handle_account_settings():
     tk.Button(settings_window, text="Set Profile Picture", command=set_profile_picture).pack()
     tk.Button(settings_window, text="View Account Details", command=view_account_details).pack()
     tk.Button(settings_window, text="Delete Account", command=delete_account).pack()
+    tk.Button(settings_window, text="Ban User", command=ban_user).pack()
+    tk.Button(settings_window, text="Timeout User", command=timeout_user).pack()
     tk.Button(settings_window, text="Close", command=settings_window.destroy).pack()
 
 def turtle_control():
@@ -288,118 +273,144 @@ def turtle_control():
     tk.Button(control_window, text="Move Backward (S)", command=move_backward).pack()
     tk.Button(control_window, text="Turn Left (A)", command=turn_left).pack()
     tk.Button(control_window, text="Turn Right (D)", command=turn_right).pack()
-    tk.Button(control_window, text="Change Color", command=change_turtle_color).pack()
-    tk.Button(control_window, text="Clear", command=clear_drawing).pack()
-
-    speed_frame = tk.Frame(control_window)
-    tk.Label(speed_frame, text="Speed:").pack(side=tk.LEFT)
-    speed_var = tk.StringVar(value=turtle_speed)
-    tk.OptionMenu(speed_frame, speed_var, "slow", "medium", "fast", command=change_speed).pack(side=tk.LEFT)
-    speed_frame.pack()
-
-    tk.Button(control_window, text="Toggle Visibility", command=toggle_visibility).pack()
+    tk.Button(control_window, text="Change Turtle Color", command=change_turtle_color).pack()
     tk.Button(control_window, text="Change Background Color", command=change_bg_color).pack()
+    tk.Button(control_window, text="Clear Drawing", command=clear_drawing).pack()
+    tk.Button(control_window, text="Toggle Visibility (V)", command=toggle_visibility).pack()
+
+    speed_frame = tk.LabelFrame(control_window, text="Change Speed")
+    speed_frame.pack(pady=5)
+    tk.Radiobutton(speed_frame, text="Slow", variable=turtle_speed, value="slow", command=lambda: change_speed("slow")).pack(anchor=tk.W)
+    tk.Radiobutton(speed_frame, text="Medium", variable=turtle_speed, value="medium", command=lambda: change_speed("medium")).pack(anchor=tk.W)
+    tk.Radiobutton(speed_frame, text="Fast", variable=turtle_speed, value="fast", command=lambda: change_speed("fast")).pack(anchor=tk.W)
+
     tk.Button(control_window, text="Save Drawing", command=save_drawing).pack()
-    tk.Button(control_window, text="Close", command=control_window.destroy).pack()
 
-def secret_codes():
-    code = simpledialog.askstring("Secret Code", "Enter secret code:")
-    if code == "404":
-        messagebox.showerror("Error Code", "An error has occurred.")
-    elif code == "nexus":
-        color = colorchooser.askcolor()[1]
-        if color:
-            my_turtle.color(color)
-            messagebox.showinfo("Nexus", "Turtle color changed successfully.")
-    else:
-        messagebox.showerror("Invalid Code", "The code you entered is invalid.")
-
-def handle_multiplayer_mode():
-    global multiplayer_mode_active
-    if authenticate_admin():
-        multiplayer_mode_active = not multiplayer_mode_active
-        status = "activated" if multiplayer_mode_active else "deactivated"
-        messagebox.showinfo("Multiplayer Mode", f"Multiplayer mode has been {status}.")
-        changelog.add_entry("1.0.4", "Multiplayer Mode", f"Multiplayer mode {status}")
-
-def free_draw_mode():
-    global free_draw_mode_active
-    free_draw_mode_active = not free_draw_mode_active
-    status = "activated" if free_draw_mode_active else "deactivated"
-    messagebox.showinfo("Free Draw Mode", f"Free draw mode has been {status}.")
-    changelog.add_entry("1.0.5", "Free Draw Mode", f"Free draw mode {status}")
-
-def view_changelog():
-    changelog_window = tk.Toplevel()
-    changelog_window.title("Changelog")
-
-    changelog_text = scrolledtext.ScrolledText(changelog_window, wrap=tk.WORD)
-    changelog_text.pack(expand=True, fill=tk.BOTH)
-
-    for entry in changelog.changes:
-        changelog_text.insert(tk.END, f"Version: {entry['version']}\n")
-        changelog_text.insert(tk.END, f"Date: {entry['date']}\n")
-        changelog_text.insert(tk.END, f"Type: {entry['type']}\n")
-        changelog_text.insert(tk.END, f"Description: {entry['description']}\n\n")
-
-    changelog_text.config(state=tk.DISABLED)
-
-    tk.Button(changelog_window, text="Close", command=changelog_window.destroy).pack()
-
-def handle_draw_shape():
-    shape = simpledialog.askstring("Draw Shape", "Enter shape to draw (triangle, square, etc.):")
-    if shape and shape.lower() in drawing_features:
-        draw_shape(shape.lower())
-        changelog.add_entry("1.0.6", "Draw Shape", f"{shape} drawn")
-
-def draw_shape(shape):
-    shapes = {
-        "triangle": [(0, -50), (50, 50), (-50, 50)],
-        "square": [(0, 0), (0, 50), (50, 50), (50, 0)],
-        "pentagon": [(0, 50), (47, 15), (29, -40), (-29, -40), (-47, 15)],
-        "circle": [(i, 50 * turtle.sin(i * turtle.pi / 180)) for i in range(360)],
-        "rectangle": [(0, 0), (0, 50), (100, 50), (100, 0)],
-        "star": [(0, 50), (14, 20), (47, 15), (23, -7), (29, -40), (0, -25), (-29, -40), (-23, -7), (-47, 15), (-14, 20)],
-        "hexagon": [(0, 50), (43, 25), (43, -25), (0, -50), (-43, -25), (-43, 25)],
-        "octagon": [(0, 50), (35, 35), (50, 0), (35, -35), (0, -50), (-35, -35), (-50, 0), (-35, 35)],
-        "spiral": [(i, i * 0.5) for i in range(360)],
-        "heart": [(i, 50 * turtle.sin(i * turtle.pi / 180)) for i in range(-45, 225)]
-        # Add more shapes as needed
+def check_secret_code(code):
+    codes = {
+        "god_mode": god_mode_action,
+        "bonus_points": bonus_points_action,
+        "access_granted": access_granted_action,
+        "night_mode": night_mode_action,
+        "nexus": nexus_action,
+        # Add more secret codes here
     }
+    action = codes.get(code.lower())
+    if action:
+        action()
+    else:
+        messagebox.showerror("Invalid Code", "The secret code entered is invalid.")
 
-    my_turtle.penup()
-    my_turtle.goto(shapes[shape][0])
-    my_turtle.pendown()
-    for point in shapes[shape][1:]:
-        my_turtle.goto(point)
-    my_turtle.penup()
+def god_mode_action():
+    messagebox.showinfo("God Mode", "God mode activated!")
 
-def setup_turtle_controls():
-    turtle.listen()
-    turtle.onkey(lambda: my_turtle.forward(10), "w")
-    turtle.onkey(lambda: my_turtle.backward(10), "s")
-    turtle.onkey(lambda: my_turtle.left(15), "a")
-    turtle.onkey(lambda: my_turtle.right(15), "d")
+def bonus_points_action():
+    messagebox.showinfo("Bonus Points", "You've received 100 bonus points!")
 
-def create_gui():
-    root = tk.Tk()
-    root.title("Main Menu")
+def access_granted_action():
+    messagebox.showinfo("Access Granted", "Special access granted!")
 
-    tk.Button(root, text="Login", command=login).pack()
-    tk.Button(root, text="Signup", command=signup).pack()
-    tk.Button(root, text="Account Settings", command=handle_account_settings).pack()
-    tk.Button(root, text="Turtle Control", command=turtle_control).pack()
-    tk.Button(root, text="Draw Shape", command=handle_draw_shape).pack()
-    tk.Button(root, text="Free Draw Mode", command=free_draw_mode).pack()
-    tk.Button(root, text="Multiplayer Mode", command=handle_multiplayer_mode).pack()
-    tk.Button(root, text="Secret Codes", command=secret_codes).pack()
-    tk.Button(root, text="View Changelog", command=view_changelog).pack()
-    tk.Button(root, text="Exit", command=root.destroy).pack()
+def night_mode_action():
+    root.configure(bg="black")
+    for widget in root.winfo_children():
+        if isinstance(widget, tk.Menu):
+            widget.configure(bg="black", fg="white")
+        elif isinstance(widget, tk.Widget):
+            widget.configure(bg="black", fg="white")
 
-    load_credentials()
-    setup_turtle_controls()
+def nexus_action():
+    troll_menu()
 
-    root.mainloop()
+def troll_menu():
+    troll_window = tk.Toplevel()
+    troll_window.title("Troll Menu")
 
-if __name__ == "__main__":
-    create_gui()
+    def fake_error():
+        messagebox.showerror("Error", "Something went wrong!")
+
+    def fake_warning():
+        messagebox.showwarning("Warning", "This is a warning!")
+
+    def fake_info():
+        messagebox.showinfo("Info", "you should sub to my channle shadowdrift_gameing not nexus.")
+
+    def fake_question():
+        response = messagebox.askquestion("Question", "Do you like this troll menu?")
+        messagebox.showinfo("Response", f"You responded: {response}")
+
+    tk.Button(troll_window, text="Fake Error", command=fake_error).pack()
+    tk.Button(troll_window, text="Fake Warning", command=fake_warning).pack()
+    tk.Button(troll_window, text="Fake Info", command=fake_info).pack()
+    tk.Button(troll_window, text="Fake Question", command=fake_question).pack()
+
+def multiplayer_menu():
+    def host_session():
+        global multiplayer_mode_active
+        multiplayer_mode_active = True
+        messagebox.showinfo("Host Session", "You are now hosting a session.")
+
+    def join_session():
+        global multiplayer_mode_active
+        multiplayer_mode_active = True
+        session_code = simpledialog.askstring("Join Session", "Enter session code:")
+        if session_code:
+            messagebox.showinfo("Join Session", f"You have joined session: {session_code}")
+
+    multiplayer_window = tk.Toplevel()
+    multiplayer_window.title("Multiplayer Menu")
+
+    tk.Button(multiplayer_window, text="Host Session", command=host_session).pack()
+    tk.Button(multiplayer_window, text="Join Session", command=join_session).pack()
+
+# Initialize the main application
+root = tk.Tk()
+root.title("Enhanced Application")
+
+# Create Menu Bar
+menu_bar = tk.Menu(root)
+
+# Account Menu
+account_menu = tk.Menu(menu_bar, tearoff=0)
+account_menu.add_command(label="Login", command=login)
+account_menu.add_command(label="Signup", command=signup)
+account_menu.add_separator()
+account_menu.add_command(label="Account Settings", command=handle_account_settings)
+account_menu.add_command(label="Logout", command=lambda: globals().update(logged_in_user=None))
+menu_bar.add_cascade(label="Account", menu=account_menu)
+
+# Admin Menu
+admin_menu = tk.Menu(menu_bar, tearoff=0)
+admin_menu.add_command(label="View Feedback", command=lambda: messagebox.showinfo("Feedback", load_feedback()))
+admin_menu.add_command(label="Clear Feedback", command=clear_feedback)
+admin_menu.add_command(label="Save Feedback", command=save_feedback)
+menu_bar.add_cascade(label="Admin", menu=admin_menu)
+
+# Turtle Control Menu
+turtle_menu = tk.Menu(menu_bar, tearoff=0)
+turtle_menu.add_command(label="Control Turtle", command=turtle_control)
+menu_bar.add_cascade(label="Turtle Control", menu=turtle_menu)
+
+# Secret Codes Menu
+secret_code_menu = tk.Menu(menu_bar, tearoff=0)
+secret_code_menu.add_command(label="Enter Secret Code", command=lambda: check_secret_code(simpledialog.askstring("Secret Code", "Enter secret code:")))
+menu_bar.add_cascade(label="Secret Codes", menu=secret_code_menu)
+
+# Multiplayer Menu
+multiplayer_menu_bar = tk.Menu(menu_bar, tearoff=0)
+multiplayer_menu_bar.add_command(label="Multiplayer", command=multiplayer_menu)
+menu_bar.add_cascade(label="Multiplayer", menu=multiplayer_menu_bar)
+
+# Changelog Menu
+changelog_menu = tk.Menu(menu_bar, tearoff=0)
+changelog_menu.add_command(label="View Changelog", command=lambda: messagebox.showinfo("Changelog", json.dumps(changelog.changes, indent=4)))
+menu_bar.add_cascade(label="Changelog", menu=changelog_menu)
+
+def open_github():
+    webbrowser.open("https://github.com/ShadowDriftGaming")
+
+tk.Button(root, text="Open GitHub", command=open_github).pack()
+root.config(menu=menu_bar)
+
+load_credentials()
+
+root.mainloop()
